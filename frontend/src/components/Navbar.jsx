@@ -1,11 +1,21 @@
 import { useContext } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
+import { useCart } from '../context/CartContext';
 import { Home, ShoppingBag, Box, LogIn, User, LogOut } from 'lucide-react';
 
 const Navbar = () => {
     const { user, logout } = useContext(AuthContext);
+    const { cartCount } = useCart();
     const navigate = useNavigate();
+    const location = useLocation();
+
+    const isActive = (path) => {
+        if (path === '/') return location.pathname === '/';
+        return location.pathname.startsWith(path);
+    };
+
+    const linkClass = (path) => `transition-all flex items-center gap-1 font-bold ${isActive(path) ? 'text-green-700' : 'text-gray-600 hover:text-[#A85517]'}`;
 
     const handleLogout = () => {
         logout();
@@ -26,23 +36,28 @@ const Navbar = () => {
                 </Link>
 
                 {/* Navigation Links */}
-                <div className="hidden md:flex items-center gap-8 text-sm font-semibold tracking-wide uppercase">
-                    <Link to="/" className="text-green-700 font-bold hover:text-[#A85517] transition-all flex items-center gap-1">
+                <div className="hidden md:flex items-center gap-8 text-sm uppercase tracking-wider">
+                    <Link to="/" className={linkClass('/')}>
                         Home
                     </Link>
-                    <Link to="/store" className="text-gray-600 hover:text-[#A85517] transition-all flex items-center gap-1">
+                    <Link to="/store" className={linkClass('/store')}>
                         Store
                     </Link>
-                    <Link to="/editor" className="text-gray-600 hover:text-[#A85517] transition-all flex items-center gap-1">
+                    <Link to="/editor" className={linkClass('/editor')}>
                         Editor
                     </Link>
                     {user && (
-                        <Link to="/designs" className="text-gray-600 hover:text-[#A85517] transition-all flex items-center gap-1">
-                            Designs
-                        </Link>
+                        <>
+                            <Link to="/designs" className={linkClass('/designs')}>
+                                Designs
+                            </Link>
+                            <Link to="/orders" className={linkClass('/orders')}>
+                                Orders
+                            </Link>
+                        </>
                     )}
                     {user?.role === 'admin' && (
-                        <Link to="/admin" className="text-gray-600 hover:text-[#A85517] transition-all flex items-center gap-1 font-bold">
+                        <Link to="/admin" className={linkClass('/admin')}>
                             Management
                         </Link>
                     )}
@@ -50,6 +65,15 @@ const Navbar = () => {
 
                 {/* Right Actions */}
                 <div className="flex items-center gap-4">
+                    <Link to="/cart" className="relative p-2 text-gray-600 hover:text-[#A85517] transition-all group">
+                        <ShoppingBag className="w-6 h-6" />
+                        {cartCount > 0 && (
+                            <span className="absolute -top-1 -right-1 bg-[#A85517] text-white text-[10px] font-bold w-4 h-4 flex items-center justify-center rounded-full group-hover:scale-110 transition-transform">
+                                {cartCount}
+                            </span>
+                        )}
+                    </Link>
+
                     {user ? (
                         <div className="flex items-center gap-4">
                             <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 rounded-full border border-gray-100">

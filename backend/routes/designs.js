@@ -2,13 +2,29 @@ const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
 const Design = require('../models/Design');
+const User = require('../models/User');
 
 // @route   GET /api/designs
-// @desc    Get all designs for the logged-in user
+// @desc    Get all designs for the logged-in user and all admin designs
 // @access  Private
 router.get('/', auth, async (req, res) => {
     try {
-        const designs = await Design.find({ creator: req.user.id }).sort({ updatedAt: -1 });
+        // Find all admin IDs
+        const admins = await User.find({ role: 'admin' }).select('_id');
+        const adminIds = admins.map(a => a._id);
+
+        // Find designs where:
+        // 1. Creator is the current user
+        // 2. OR Creator is an admin
+        const designs = await Design.find({
+            $or: [
+                { creator: req.user.id },
+                { creator: { $in: adminIds } }
+            ]
+        })
+        .populate('creator', 'name role')
+        .sort({ updatedAt: -1 });
+
         res.json(designs);
     } catch (err) {
         console.error(err.message);
@@ -23,11 +39,12 @@ router.post('/', auth, async (req, res) => {
     const { name, roomSettings, placedItems } = req.body;
 
     // Map the editor's placedItems format to the DB schema
-    const furnitureItems = placedItems.map(item => ({
+    const furnitureItems = (placedItems || []).map(item => ({
         furnitureId: item.furnitureId,
         name: item.name,
         category: item.category,
         color: item.color,
+        modelUrl: item.modelUrl,
         position: { x: item.x, y: 0, z: item.y },
         rotation: { y: item.rotation },
         scaleX: item.scaleX,
@@ -65,6 +82,7 @@ router.put('/:id', auth, async (req, res) => {
         name: item.name,
         category: item.category,
         color: item.color,
+        modelUrl: item.modelUrl,
         position: { x: item.x, y: 0, z: item.y },
         rotation: { y: item.rotation },
         scaleX: item.scaleX,

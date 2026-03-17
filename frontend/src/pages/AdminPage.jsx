@@ -154,6 +154,7 @@ const AdminPage = () => {
     const [stats, setStats] = useState(null);
     const [furniture, setFurniture] = useState([]);
     const [users, setUsers] = useState([]);
+    const [orders, setOrders] = useState([]);
     const [search, setSearch] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('All');
     const [showModal, setShowModal] = useState(false);
@@ -171,14 +172,16 @@ const AdminPage = () => {
     const fetchAll = async () => {
         setLoading(true);
         try {
-            const [statsRes, furnitureRes, usersRes] = await Promise.all([
+            const [statsRes, furnitureRes, usersRes, ordersRes] = await Promise.all([
                 axios.get(`${import.meta.env.VITE_API_URL}/admin/stats`),
                 axios.get(`${import.meta.env.VITE_API_URL}/furniture`),
                 axios.get(`${import.meta.env.VITE_API_URL}/admin/users`),
+                axios.get(`${import.meta.env.VITE_API_URL}/admin/orders`),
             ]);
             setStats(statsRes.data);
             setFurniture(furnitureRes.data);
             setUsers(usersRes.data);
+            setOrders(ordersRes.data);
         } catch (err) {
             console.error('Admin fetch error:', err);
         } finally {
@@ -234,6 +237,22 @@ const AdminPage = () => {
         } catch (err) { console.error(err); }
     };
 
+    // Order management
+    const updateOrderStatus = async (id, status) => {
+        try {
+            const res = await axios.put(`${import.meta.env.VITE_API_URL}/admin/orders/${id}/status`, { status });
+            setOrders(prev => prev.map(o => o._id === id ? res.data : o));
+        } catch (err) { console.error(err); }
+    };
+
+    const deleteOrder = async (id) => {
+        if (!window.confirm('Delete this order permanently?')) return;
+        try {
+            await axios.delete(`${import.meta.env.VITE_API_URL}/admin/orders/${id}`);
+            setOrders(prev => prev.filter(o => o._id !== id));
+        } catch (err) { console.error(err); }
+    };
+
     const filteredFurniture = furniture.filter(f => {
         const matchesSearch = (f.name || '').toLowerCase().includes(search.toLowerCase());
         const matchesCat = categoryFilter === 'All' || f.category === categoryFilter;
@@ -259,6 +278,7 @@ const AdminPage = () => {
         { id: 'analytics', label: 'Analytics', icon: BarChart3 },
         { id: 'furniture', label: 'Furniture Management', icon: Package },
         { id: 'users', label: 'User Management', icon: Users },
+        { id: 'orders', label: 'Order Management', icon: ShoppingBag },
     ];
 
     return (
@@ -310,36 +330,63 @@ const AdminPage = () => {
                                 <p className="text-sm text-gray-400 mt-1">Platform usage statistics and insights</p>
                             </div>
 
-                            <div className="grid grid-cols-3 gap-4">
+                            <div className="grid grid-cols-4 gap-4">
                                 <StatCard label="Total Users" value={stats?.totalUsers ?? '-'} icon={Users} color="text-blue-500" bg="bg-blue-50" delta="+12%" />
                                 <StatCard label="Total Designs" value={stats?.totalDesigns ?? '-'} icon={LayoutGrid} color="text-[#A85517]" bg="bg-orange-50" delta="+18%" />
+                                <StatCard label="Total Orders" value={stats?.totalOrders ?? '-'} icon={ShoppingBag} color="text-emerald-500" bg="bg-emerald-50" delta="+25%" />
                                 <StatCard label="Furniture Items" value={stats?.totalFurniture ?? '-'} icon={Package} color="text-purple-500" bg="bg-purple-50" delta="+5%" />
                             </div>
 
                             {/* Recent Designs Activity */}
-                            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-                                <h2 className="text-sm font-black text-gray-800 mb-5 uppercase tracking-widest">Recent Design Activity</h2>
-                                {stats?.recentDesigns?.length === 0 && (
-                                    <p className="text-sm text-gray-400 text-center py-8">No designs saved yet</p>
-                                )}
-                                <div className="space-y-0 divide-y divide-gray-50">
-                                    {(stats?.recentDesigns || []).map((d, i) => (
-                                        <div key={d._id} className="flex items-center justify-between py-3.5">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center">
-                                                    <LayoutGrid className="w-4 h-4 text-[#A85517]" />
+                            <div className="grid grid-cols-2 gap-6">
+                                {/* Recent Designs */}
+                                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+                                    <h2 className="text-sm font-black text-gray-800 mb-5 uppercase tracking-widest">Recent Activity</h2>
+                                    {stats?.recentDesigns?.length === 0 && (
+                                        <p className="text-sm text-gray-400 text-center py-8">No designs saved yet</p>
+                                    )}
+                                    <div className="space-y-0 divide-y divide-gray-50">
+                                        {(stats?.recentDesigns || []).map((d) => (
+                                            <div key={d._id} className="flex items-center justify-between py-3.5">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center">
+                                                        <LayoutGrid className="w-4 h-4 text-[#A85517]" />
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-sm font-bold text-gray-900 line-clamp-1">{d.name}</p>
+                                                        <p className="text-[11px] text-gray-400">by {d.creator?.name || 'Unknown'}</p>
+                                                    </div>
                                                 </div>
-                                                <div>
-                                                    <p className="text-sm font-bold text-gray-900">{d.name}</p>
-                                                    <p className="text-[11px] text-gray-400">by {d.creator?.name || 'Unknown'} · {d.creator?.email}</p>
-                                                </div>
-                                            </div>
-                                            <div className="text-right">
                                                 <p className="text-[11px] text-gray-400">{new Date(d.createdAt).toLocaleDateString()}</p>
-                                                <p className="text-[11px] font-bold text-gray-500">{d.furnitureItems?.length || 0} items</p>
                                             </div>
-                                        </div>
-                                    ))}
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Recent Orders */}
+                                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+                                    <h2 className="text-sm font-black text-gray-800 mb-5 uppercase tracking-widest text-[#A85517]">Recent Orders</h2>
+                                    {stats?.recentOrders?.length === 0 && (
+                                        <p className="text-sm text-gray-400 text-center py-8">No orders yet</p>
+                                    )}
+                                    <div className="space-y-0 divide-y divide-gray-50">
+                                        {(stats?.recentOrders || []).map((o) => (
+                                            <div key={o._id} className="flex items-center justify-between py-3.5">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+                                                        <ShoppingBag className="w-4 h-4 text-emerald-500" />
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-sm font-bold text-gray-900">${o.total.toLocaleString()}</p>
+                                                        <p className="text-[11px] text-gray-400">by {o.user?.name || 'Customer'}</p>
+                                                    </div>
+                                                </div>
+                                                <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${o.status === 'Delivered' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}`}>
+                                                    {o.status}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
 
@@ -541,6 +588,73 @@ const AdminPage = () => {
                                         {filteredUsers.length === 0 && (
                                             <tr><td colSpan={4} className="px-6 py-16 text-center text-sm text-gray-400">No users found</td></tr>
                                         )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── Order Management Tab ── */}
+                    {activeTab === 'orders' && (
+                        <div className="space-y-6 animate-in fade-in duration-300">
+                             <div className="flex items-center justify-between">
+                                <div>
+                                    <h1 className="text-3xl font-black text-gray-900 tracking-tight">Order Management</h1>
+                                    <p className="text-sm text-gray-400 mt-1">{orders.length} orders total</p>
+                                </div>
+                            </div>
+
+                            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                                <table className="w-full text-left">
+                                    <thead>
+                                        <tr className="border-b border-gray-50">
+                                            {['Order ID', 'Customer', 'Items', 'Total', 'Status', 'Actions'].map(h => (
+                                                <th key={h} className="text-left text-[10px] font-black text-gray-400 uppercase tracking-widest px-6 py-4">{h}</th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-50 text-sm">
+                                        {orders.map(o => (
+                                            <tr key={o._id} className="hover:bg-gray-50/50 transition-colors">
+                                                <td className="px-6 py-4 font-mono text-[10px] text-gray-400">#{o._id.slice(-8).toUpperCase()}</td>
+                                                <td className="px-6 py-4">
+                                                    <p className="font-bold text-gray-900">{o.shippingAddress.firstName} {o.shippingAddress.lastName}</p>
+                                                    <p className="text-[10px] text-gray-400">{o.user?.email || o.shippingAddress.email}</p>
+                                                </td>
+                                                <td className="px-6 py-4 text-xs">
+                                                    {o.items.length} {o.items.length === 1 ? 'item' : 'items'}
+                                                </td>
+                                                <td className="px-6 py-4 font-black text-gray-900">${o.total.toLocaleString()}</td>
+                                                <td className="px-6 py-4">
+                                                    <span className={`text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-tighter ${
+                                                        o.status === 'Delivered' ? 'bg-emerald-50 text-emerald-600' : 
+                                                        o.status === 'Cancelled' ? 'bg-red-50 text-red-600' :
+                                                        'bg-orange-50 text-orange-600'
+                                                    }`}>
+                                                        {o.status}
+                                                    </span>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <select
+                                                            value={o.status}
+                                                            onChange={(e) => updateOrderStatus(o._id, e.target.value)}
+                                                            className="text-xs border border-gray-100 rounded-lg px-2 py-1.5 outline-none focus:ring-2 focus:ring-orange-100 bg-white"
+                                                        >
+                                                            {['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'].map(s => (
+                                                                <option key={s} value={s}>{s}</option>
+                                                            ))}
+                                                        </select>
+                                                        <button 
+                                                            onClick={() => deleteOrder(o._id)}
+                                                            className="p-2 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition-colors"
+                                                        >
+                                                            <Trash2 className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
                                     </tbody>
                                 </table>
                             </div>

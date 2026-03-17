@@ -4,6 +4,7 @@ const auth = require('../middleware/auth');
 const Furniture = require('../models/Furniture');
 const User = require('../models/User');
 const Design = require('../models/Design');
+const Order = require('../models/Order');
 
 const multer = require('multer');
 const path = require('path');
@@ -53,8 +54,10 @@ router.get('/stats', auth, adminOnly, async (req, res) => {
         const totalUsers = await User.countDocuments();
         const totalDesigns = await Design.countDocuments();
         const totalFurniture = await Furniture.countDocuments();
+        const totalOrders = await Order.countDocuments();
+        const recentOrders = await Order.find().sort({ createdAt: -1 }).limit(5).populate('user', 'name email');
         const recentDesigns = await Design.find().sort({ createdAt: -1 }).limit(5).populate('creator', 'name email');
-        res.json({ totalUsers, totalDesigns, totalFurniture, recentDesigns });
+        res.json({ totalUsers, totalDesigns, totalFurniture, totalOrders, recentOrders, recentDesigns });
     } catch (err) {
         console.error(err.message);
         res.status(500).send('Server Error');
@@ -199,6 +202,49 @@ router.delete('/users/:id', auth, adminOnly, async (req, res) => {
     try {
         await User.findByIdAndDelete(req.params.id);
         res.json({ msg: 'User deleted' });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
+    }
+});
+
+// ── ORDER MANAGEMENT ─────────────────────────────────────────────────────────
+
+// @route   GET /api/admin/orders
+// @desc    Get all orders
+// @access  Admin only
+router.get('/orders', auth, adminOnly, async (req, res) => {
+    try {
+        const orders = await Order.find().populate('user', 'name email').sort({ createdAt: -1 });
+        res.json(orders);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
+    }
+});
+
+// @route   PUT /api/admin/orders/:id/status
+// @desc    Update order status
+// @access  Admin only
+router.put('/orders/:id/status', auth, adminOnly, async (req, res) => {
+    try {
+        const { status } = req.body;
+        const order = await Order.findByIdAndUpdate(req.params.id, { status }, { new: true }).populate('user', 'name email');
+        if (!order) return res.status(404).json({ msg: 'Order not found' });
+        res.json(order);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
+    }
+});
+
+// @route   DELETE /api/admin/orders/:id
+// @desc    Delete an order
+// @access  Admin only
+router.delete('/orders/:id', auth, adminOnly, async (req, res) => {
+    try {
+        await Order.findByIdAndDelete(req.params.id);
+        res.json({ msg: 'Order deleted' });
     } catch (err) {
         console.error(err.message);
         res.status(500).send('Server Error');

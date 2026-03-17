@@ -3,10 +3,12 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import { Star, ChevronRight, Minus, Plus, Box, ShoppingCart, Truck, ShieldCheck, RefreshCw, Ruler, Layers, Maximize, Image as ImageIcon } from 'lucide-react';
 import Product3DViewer from '../components/Product3DViewer';
+import { useCart } from '../context/CartContext';
 
 const ProductDetailPage = () => {
     const { id } = useParams();
     const navigate = useNavigate();
+    const { addToCart } = useCart();
     const [product, setProduct] = useState(null);
     const [loading, setLoading] = useState(true);
     const [selectedImage, setSelectedImage] = useState(0);
@@ -14,14 +16,28 @@ const ProductDetailPage = () => {
     const [selectedColor, setSelectedColor] = useState(0);
     const [activeTab, setActiveTab] = useState('Description');
     const [show3D, setShow3D] = useState(false);
+    const [reviews, setReviews] = useState([]);
+
+    const handleAddToCart = () => {
+        if (product) {
+            const color = product.colors?.[selectedColor] || null;
+            addToCart(product, quantity, color);
+            // Optional: navigate to cart or show a toast
+            navigate('/cart');
+        }
+    };
 
     useEffect(() => {
-        const fetchProduct = async () => {
+        const fetchProductAndReviews = async () => {
             try {
-                const res = await axios.get(`${import.meta.env.VITE_API_URL}/furniture/${id}`);
-                setProduct(res.data);
+                const [prodRes, revRes] = await Promise.all([
+                    axios.get(`${import.meta.env.VITE_API_URL}/furniture/${id}`),
+                    axios.get(`${import.meta.env.VITE_API_URL}/reviews/product/${id}`)
+                ]);
+                setProduct(prodRes.data);
+                setReviews(revRes.data);
                 setLoading(false);
-                if (res.data.modelUrl) {
+                if (prodRes.data.modelUrl) {
                     setShow3D(true);
                 }
             } catch (err) {
@@ -29,7 +45,7 @@ const ProductDetailPage = () => {
                 setLoading(false);
             }
         };
-        fetchProduct();
+        fetchProductAndReviews();
     }, [id]);
 
     const handleQuantity = (type) => {
@@ -215,7 +231,10 @@ const ProductDetailPage = () => {
                                 <Box className="w-6 h-6" />
                                 Open in Room Editor
                             </button>
-                            <button className="w-full bg-white border-2 border-gray-900 text-gray-900 py-5 rounded-[22px] font-black text-lg uppercase tracking-widest flex items-center justify-center gap-4 hover:bg-gray-900 hover:text-white transition-all active:scale-[0.98]">
+                            <button 
+                                onClick={handleAddToCart}
+                                className="w-full bg-white border-2 border-gray-900 text-gray-900 py-5 rounded-[22px] font-black text-lg uppercase tracking-widest flex items-center justify-center gap-4 hover:bg-gray-900 hover:text-white transition-all active:scale-[0.98]"
+                            >
                                 <ShoppingCart className="w-6 h-6" />
                                 Add to Cart
                             </button>
@@ -275,10 +294,52 @@ const ProductDetailPage = () => {
                             </div>
                         )}
                         {activeTab === 'Reviews' && (
-                            <div className="text-center py-12 bg-gray-50 rounded-[32px]">
-                                <Star className="w-12 h-12 text-[#A85517] opacity-20 mx-auto mb-4" />
-                                <h3 className="text-xl font-black text-gray-900 font-serif">Customer Feedback</h3>
-                                <p className="text-gray-400 mt-2">Displaying top rated reviews for this collection.</p>
+                            <div className="space-y-12">
+                                <div className="flex items-center justify-between mb-8 pb-8 border-b border-gray-100">
+                                    <h3 className="text-2xl font-black text-gray-900 font-serif">Customer Feedback</h3>
+                                    <div className="text-right">
+                                        <div className="text-3xl font-black text-[#A85517]">{product.rating}</div>
+                                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mt-1">Global Average</div>
+                                    </div>
+                                </div>
+                                {reviews.length === 0 ? (
+                                    <div className="text-center py-20 bg-gray-50 rounded-[40px] border border-dashed border-gray-200">
+                                        <Star className="w-12 h-12 text-gray-200 mx-auto mb-4" />
+                                        <h4 className="text-lg font-black text-gray-400 font-serif uppercase tracking-widest">No reviews yet</h4>
+                                        <p className="text-gray-300 text-sm mt-3">Be the first to share your experience after purchase!</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-10">
+                                        {reviews.map((r) => (
+                                            <div key={r._id} className="group animate-in fade-in duration-500">
+                                                <div className="flex justify-between items-start mb-4">
+                                                    <div className="flex items-center gap-4">
+                                                        <div className="w-12 h-12 rounded-2xl bg-[#A85517]/5 flex items-center justify-center font-black text-[#A85517] text-lg uppercase">
+                                                            {r.userName?.[0] || 'U'}
+                                                        </div>
+                                                        <div>
+                                                            <h5 className="text-sm font-black text-gray-900 uppercase tracking-tight">{r.userName || 'Anonymous User'}</h5>
+                                                            <p className="text-[10px] font-bold text-gray-400 mt-0.5">{new Date(r.createdAt).toLocaleDateString()}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-0.5">
+                                                        {[...Array(5)].map((_, i) => (
+                                                            <Star
+                                                                key={i}
+                                                                className={`w-3.5 h-3.5 ${i < r.rating ? 'text-amber-400 fill-amber-400' : 'text-gray-200'}`}
+                                                            />
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                <div className="pl-16">
+                                                    <p className="text-gray-600 font-medium leading-relaxed italic border-l-2 border-gray-100 pl-6 py-1">
+                                                        "{r.comment || 'The customer didn\'t leave a written review, but provided a stellar rating.'}"
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>

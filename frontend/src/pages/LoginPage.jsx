@@ -1,5 +1,5 @@
 import { useState, useContext } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 
 const LoginPage = () => {
@@ -7,6 +7,7 @@ const LoginPage = () => {
     const [error, setError] = useState('');
     const { login } = useContext(AuthContext);
     const navigate = useNavigate();
+    const location = useLocation();
 
     const onChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
 
@@ -15,7 +16,9 @@ const LoginPage = () => {
         setError('');
         const res = await login(formData.email, formData.password);
         if (res.success) {
-            navigate('/');
+            const params = new URLSearchParams(location.search);
+            const redirect = params.get('redirect');
+            navigate(redirect || '/');
         } else {
             setError(res.msg);
         }
@@ -31,8 +34,8 @@ const LoginPage = () => {
 
                     <div className="bg-orange-50 border border-orange-100 rounded-lg p-4 mb-8">
                         <p className="text-xs font-bold text-orange-800 uppercase tracking-wider mb-2">Demo Credentials:</p>
-                        <p className="text-xs text-orange-700 font-medium">Customer: <span className="font-bold">john@example.com</span> / Password: <span className="font-bold">123456</span></p>
-                        <p className="text-xs text-orange-700 font-medium mt-1">Designer: <span className="font-bold">sarah@example.com</span> / Password: <span className="font-bold">123456</span></p>
+                        <p className="text-xs text-orange-700 font-medium">Customer: <span className="font-bold">user@gmail.com</span> / Password: <span className="font-bold">12345678</span></p>
+                        <p className="text-xs text-orange-700 font-medium mt-1">Designer: <span className="font-bold">admin@gmail.com</span> / Password: <span className="font-bold">12345678</span></p>
                     </div>
 
                     <form onSubmit={onSubmit}>

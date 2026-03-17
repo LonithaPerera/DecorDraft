@@ -1,8 +1,10 @@
 import { useNavigate } from 'react-router-dom';
 import { Star, Box, ShoppingCart } from 'lucide-react';
+import { useCart } from '../context/CartContext';
 
 const FurnitureCard = ({ item }) => {
     const navigate = useNavigate();
+    const { addToCart } = useCart();
 
     return (
         <div className="bg-white rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border border-gray-100 group">
@@ -60,6 +62,10 @@ const FurnitureCard = ({ item }) => {
                         Visualize in 3D
                     </button>
                     <button
+                        onClick={() => {
+                            addToCart(item);
+                            navigate('/cart');
+                        }}
                         className="w-full bg-[#111827] text-white py-3 rounded-xl font-bold text-sm hover:bg-[#A85517] transition-all flex items-center justify-center gap-2"
                     >
                         <ShoppingCart className="w-4 h-4" />

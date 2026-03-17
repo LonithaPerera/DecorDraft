@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+import { CartProvider } from './context/CartContext';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import HomePage from './pages/HomePage';
@@ -10,6 +11,9 @@ import ProductDetailPage from './pages/ProductDetailPage';
 import EditorPage from './pages/EditorPage';
 import MyDesignsPage from './pages/MyDesignsPage';
 import AdminPage from './pages/AdminPage';
+import CartPage from './pages/CartPage';
+import CheckoutPage from './pages/CheckoutPage';
+import OrdersPage from './pages/OrdersPage';
 
 const Layout = ({ children }) => (
   <div className="flex flex-col min-h-screen">
@@ -24,21 +28,26 @@ const Layout = ({ children }) => (
 function App() {
   return (
     <AuthProvider>
-      <Router>
-        <Routes>
-          <Route path="/" element={<Layout><HomePage /></Layout>} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
+      <CartProvider>
+        <Router>
+          <Routes>
+            <Route path="/" element={<Layout><HomePage /></Layout>} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
 
-          <Route path="/store" element={<Layout><StorePage /></Layout>} />
-          <Route path="/store/:id" element={<Layout><ProductDetailPage /></Layout>} />
-          <Route path="/editor" element={<EditorPage />} />
-          <Route path="/designs" element={<Layout><MyDesignsPage /></Layout>} />
-          <Route path="/admin" element={<AdminPage />} />
+            <Route path="/store" element={<Layout><StorePage /></Layout>} />
+            <Route path="/store/:id" element={<Layout><ProductDetailPage /></Layout>} />
+            <Route path="/cart" element={<Layout><CartPage /></Layout>} />
+            <Route path="/checkout" element={<Layout><CheckoutPage /></Layout>} />
+            <Route path="/orders" element={<Layout><OrdersPage /></Layout>} />
+            <Route path="/editor" element={<EditorPage />} />
+            <Route path="/designs" element={<Layout><MyDesignsPage /></Layout>} />
+            <Route path="/admin" element={<AdminPage />} />
 
-          <Route path="*" element={<Navigate to="/" />} />
-        </Routes>
-      </Router>
+            <Route path="*" element={<Navigate to="/" />} />
+          </Routes>
+        </Router>
+      </CartProvider>
     </AuthProvider>
   );
 }

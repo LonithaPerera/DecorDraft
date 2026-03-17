@@ -1,9 +1,9 @@
-import React, { useState, Suspense, useEffect, useRef, useContext, useMemo } from 'react';
+import React, { useState, Suspense, useEffect, useRef, useContext, useMemo, useCallback } from 'react';
 import * as THREE from 'three';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import axios from 'axios';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useThree } from '@react-three/fiber';
 import { toPng } from 'html-to-image';
 import { OrbitControls, Grid, Environment, ContactShadows, PerspectiveCamera, useGLTF } from '@react-three/drei';
 import {
@@ -21,153 +21,71 @@ import {
     Redo2,
     Ruler,
     Palette,
-    Plus
+    Plus,
+    Home
 } from 'lucide-react';
 
 // --- 3D Components ---
 
-// Helper: renders one horizontal floor slab + optional walls around it
-const FloorSlab = ({ x, z, w, d, floorColor, wallColor, wallH = 3, wallT = 0.1, walls = {} }) => (
-    <group position={[x, 0, z]}>
-        {/* Floor panel */}
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
-            <planeGeometry args={[w, d]} />
-            <meshStandardMaterial color={floorColor} />
-        </mesh>
-        {/* Walls on requested sides */}
-        {walls.back && <mesh position={[0, wallH / 2, -d / 2]} receiveShadow castShadow><boxGeometry args={[w, wallH, wallT]} /><meshStandardMaterial color={wallColor} /></mesh>}
-        {walls.front && <mesh position={[0, wallH / 2, d / 2]} receiveShadow castShadow><boxGeometry args={[w, wallH, wallT]} /><meshStandardMaterial color={wallColor} /></mesh>}
-        {walls.left && <mesh position={[-w / 2, wallH / 2, 0]} rotation={[0, Math.PI / 2, 0]} receiveShadow castShadow><boxGeometry args={[d, wallH, wallT]} /><meshStandardMaterial color={wallColor} /></mesh>}
-        {walls.right && <mesh position={[w / 2, wallH / 2, 0]} rotation={[0, Math.PI / 2, 0]} receiveShadow castShadow><boxGeometry args={[d, wallH, wallT]} /><meshStandardMaterial color={wallColor} /></mesh>}
-    </group>
-);
+// 3D Wall Component
+const Wall = React.memo(({ position, rotation, length, color }) => (
+    <mesh position={position} rotation={rotation} receiveShadow castShadow>
+        <planeGeometry args={[length, 3]} />
+        <meshStandardMaterial color={color} side={THREE.FrontSide} />
+    </mesh>
+));
 
-const Room = ({ width, depth, wallColor, floorColor, shape = 'rectangle' }) => {
-    const W = width;   // total bounding width
-    const D = depth;   // total bounding depth
+const Room = React.memo(({ width, depth, wallColor, floorColor, shape = 'rectangle' }) => {
+    const W = width;
+    const D = depth;
 
-    // Each shape is decomposed into floor slabs + wall sides
     const renderShape = () => {
-        switch (shape) {
+        if (shape === 'l-shape') {
+            const tlW = W * 0.55;
+            const rmW = W * 0.45;
+            const tlD = D * 0.45;
+            const rmD = D * 0.55;
 
-            case 'l-shape': {
-                // ┌────┐
-                // │  top-left slab (55% wide, 45% deep)
-                // │    ├────┐
-                // │    │    │ bottom-right slab
-                // └────┴────┘
-                const tlW = W * 0.55, tlD = D * 0.45; // top-left piece
-                const brW = W, brD = D * 0.55; // full-width bottom piece
-                const tlX = -W / 2 + tlW / 2, tlZ = -D / 2 + tlD / 2;
-                const brX = 0, brZ = -D / 2 + tlD + brD / 2;
-                return (
-                    <group>
-                        {/* top-left slab */}
-                        <FloorSlab x={tlX} z={tlZ} w={tlW} d={tlD} floorColor={floorColor} wallColor={wallColor}
-                            walls={{ back: true, left: true, right: true }} />
-                        {/* bottom full-width slab */}
-                        <FloorSlab x={brX} z={brZ} w={brW} d={brD} floorColor={floorColor} wallColor={wallColor}
-                            walls={{ front: true, left: true, right: true }} />
-                        {/* inner step wall (bottom of top slab, right side) */}
-                        <mesh position={[tlX + tlW / 2, 1.5, tlZ + tlD / 2]} receiveShadow>
-                            <boxGeometry args={[0.1, 3, 0.1]} />
-                            <meshStandardMaterial color={wallColor} />
-                        </mesh>
-                        <mesh position={[tlX + tlW / 2, 1.5, tlZ]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
-                            <boxGeometry args={[tlD, 3, 0.1]} />
-                            <meshStandardMaterial color={wallColor} />
-                        </mesh>
-                    </group>
-                );
-            }
+            return (
+                <group>
+                    {/* Floor Slabs */}
+                    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[-W/2 + tlW/2, -0.01, -D/2 + tlD/2]} receiveShadow>
+                        <planeGeometry args={[tlW, tlD]} />
+                        <meshStandardMaterial color={floorColor} />
+                    </mesh>
+                    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, tlD/2]} receiveShadow>
+                        <planeGeometry args={[W, rmD]} />
+                        <meshStandardMaterial color={floorColor} />
+                    </mesh>
 
-            case 't-shape': {
-                // ┌──────────────┐  top bar (full width, 38% deep)
-                // │   left gap   │   middle corridor (20% each side, 24% deep)
-                // └──┐        ┌──┘
-                //    │  stem  │    stem (60% wide, 38% deep)
-                //    └────────┘
-                const topW = W, topD = D * 0.38;  // horizontal bar
-                const stemW = W * 0.60, stemD = D * 0.62; // vertical stem
-                const topX = 0, topZ = -D / 2 + topD / 2;
-                const stemX = 0, stemZ = -D / 2 + topD + stemD / 2;
-                return (
-                    <group>
-                        <FloorSlab x={topX} z={topZ} w={topW} d={topD} floorColor={floorColor} wallColor={wallColor}
-                            walls={{ back: true, left: true, right: true }} />
-                        <FloorSlab x={stemX} z={stemZ} w={stemW} d={stemD} floorColor={floorColor} wallColor={wallColor}
-                            walls={{ front: true, left: true, right: true }} />
-                        {/* inner step walls (where bar meets stem) */}
-                        {[-1, 1].map(side => (
-                            <mesh key={side} position={[side * stemW / 2, 1.5, stemZ - stemD / 2]} receiveShadow>
-                                <boxGeometry args={[0.1, 3, 0.1]} />
-                                <meshStandardMaterial color={wallColor} />
-                            </mesh>
-                        ))}
-                        <mesh position={[-stemW / 2, 1.5, stemZ - stemD / 2 + (topD / 2)]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
-                            <boxGeometry args={[topD, 3, 0.1]} />
-                            <meshStandardMaterial color={wallColor} />
-                        </mesh>
-                        <mesh position={[stemW / 2, 1.5, stemZ - stemD / 2 + (topD / 2)]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
-                            <boxGeometry args={[topD, 3, 0.1]} />
-                            <meshStandardMaterial color={wallColor} />
-                        </mesh>
-                    </group>
-                );
-            }
-
-            case 'u-shape': {
-                // ┌──┐      ┌──┐  left & right arms (32% wide, full depth)
-                // │  │      │  │
-                // │  └──────┘  │  bottom connector (36% wide, 45% deep)
-                // └────────────┘
-                const armW = W * 0.32, armD = D;
-                const midW = W * 0.36, midD = D * 0.45;
-                const lX = -W / 2 + armW / 2, rX = W / 2 - armW / 2;
-                const armZ = 0;
-                const midX = 0, midZ = D / 2 - midD / 2;
-                return (
-                    <group>
-                        {/* Left arm */}
-                        <FloorSlab x={lX} z={armZ} w={armW} d={armD} floorColor={floorColor} wallColor={wallColor}
-                            walls={{ back: true, left: true, front: true }} />
-                        {/* Right arm */}
-                        <FloorSlab x={rX} z={armZ} w={armW} d={armD} floorColor={floorColor} wallColor={wallColor}
-                            walls={{ back: true, right: true, front: true }} />
-                        {/* Bottom connector */}
-                        <FloorSlab x={midX} z={midZ} w={midW} d={midD} floorColor={floorColor} wallColor={wallColor}
-                            walls={{ front: true }} />
-                        {/* Inner walls between arms and connector */}
-                        <mesh position={[lX + armW / 2, 1.5, midZ - midD / 2]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
-                            <boxGeometry args={[midD, 3, 0.1]} />
-                            <meshStandardMaterial color={wallColor} />
-                        </mesh>
-                        <mesh position={[rX - armW / 2, 1.5, midZ - midD / 2]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
-                            <boxGeometry args={[midD, 3, 0.1]} />
-                            <meshStandardMaterial color={wallColor} />
-                        </mesh>
-                    </group>
-                );
-            }
-
-            default: // rectangle
-                return (
-                    <group>
-                        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
-                            <planeGeometry args={[W, D]} />
-                            <meshStandardMaterial color={floorColor} />
-                        </mesh>
-                        <mesh position={[0, 1.5, -D / 2]} receiveShadow castShadow>
-                            <boxGeometry args={[W, 3, 0.1]} />
-                            <meshStandardMaterial color={wallColor} />
-                        </mesh>
-                        <mesh position={[-W / 2, 1.5, 0]} rotation={[0, Math.PI / 2, 0]} receiveShadow castShadow>
-                            <boxGeometry args={[D, 3, 0.1]} />
-                            <meshStandardMaterial color={wallColor} />
-                        </mesh>
-                    </group>
-                );
+                    {/* Outer Boundary Walls */}
+                    <Wall position={[-W/2 + tlW/2, 1.5, -D/2]} rotation={[0, 0, 0]} length={tlW} color={wallColor} />
+                    <Wall position={[-W/2, 1.5, 0]} rotation={[0, Math.PI / 2, 0]} length={D} color={wallColor} />
+                    <Wall position={[0, 1.5, D/2]} rotation={[0, Math.PI, 0]} length={W} color={wallColor} />
+                    <Wall position={[W/2, 1.5, tlD/2]} rotation={[0, -Math.PI / 2, 0]} length={rmD} color={wallColor} />
+                    
+                    {/* Inner Step Walls (L-cutout boundaries) */}
+                    <Wall position={[tlW/2, 1.5, -D/2 + tlD]} rotation={[0, 0, 0]} length={rmW} color={wallColor} />
+                    <Wall position={[-W/2 + tlW, 1.5, -D/2 + tlD/2]} rotation={[0, -Math.PI / 2, 0]} length={tlD} color={wallColor} />
+                </group>
+            );
         }
+
+        // default: rectangle
+        return (
+            <group>
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
+                    <planeGeometry args={[W, D]} />
+                    <meshStandardMaterial color={floorColor} />
+                </mesh>
+                
+                {/* 4 Walls forming the room box */}
+                <Wall position={[0, 1.5, -D / 2]} rotation={[0, 0, 0]} length={W} color={wallColor} />
+                <Wall position={[0, 1.5, D / 2]} rotation={[0, Math.PI, 0]} length={W} color={wallColor} />
+                <Wall position={[-W / 2, 1.5, 0]} rotation={[0, Math.PI / 2, 0]} length={D} color={wallColor} />
+                <Wall position={[W / 2, 1.5, 0]} rotation={[0, -Math.PI / 2, 0]} length={D} color={wallColor} />
+            </group>
+        );
     };
 
     return (
@@ -186,7 +104,7 @@ const Room = ({ width, depth, wallColor, floorColor, shape = 'rectangle' }) => {
             />
         </group>
     );
-};
+});
 
 
 // --- Error Boundary for 3D Models ---
@@ -206,7 +124,7 @@ class ModelErrorBoundary extends React.Component {
 
 
 // --- 3D Model Loader ---
-const GLBModel = ({ url, scaleX, scaleY, targetWidth, targetDepth, targetHeight }) => {
+const GLBModel = ({ url, scaleX, scaleY, targetWidth, targetDepth, targetHeight, color }) => {
     const fullUrl = url?.startsWith('/') ? `${import.meta.env.VITE_API_URL}${url}` : url;
     const { scene } = useGLTF(fullUrl);
     const clonedScene = useMemo(() => {
@@ -248,43 +166,59 @@ const GLBModel = ({ url, scaleX, scaleY, targetWidth, targetDepth, targetHeight 
         return s;
     }, [scene, targetWidth, targetDepth, scaleX, scaleY]);
 
+    // Optimize: Update color via useEffect to avoid re-cloning the entire model
+    useEffect(() => {
+        if (!clonedScene) return;
+        clonedScene.traverse((child) => {
+            if (child.isMesh && child.material) {
+                if (Array.isArray(child.material)) {
+                    child.material.forEach(m => {
+                        if (!m._isCloned) { m = m.clone(); m._isCloned = true; }
+                        m.color.set(color);
+                    });
+                } else {
+                    if (!child.material._isCloned) {
+                        child.material = child.material.clone();
+                        child.material._isCloned = true;
+                    }
+                    child.material.color.set(color);
+                }
+            }
+        });
+    }, [clonedScene, color]);
+
     if (!clonedScene) return null;
     return <primitive object={clonedScene} />;
 };
 
 
-const Furniture3D = ({ item }) => {
+const FurnitureModel = React.memo(({ item }) => {
     const { 
         width = 1, 
         depth = 1, 
         height = 0.75,
-        rotation = 0, 
         scaleX = 100, 
         scaleY = 100, 
         color = "#ccc", 
         category = "Other", 
         modelUrl 
     } = item;
-    const rotRad = (rotation * Math.PI) / 180;
     const finalWidth = width * (scaleX / 100);
     const finalDepth = depth * (scaleY / 100);
 
-    const renderModel = () => {
+    const renderManualModel = () => {
         switch (category) {
             case 'Sofas':
                 return (
                     <group>
-                        {/* Base Seat */}
                         <mesh castShadow receiveShadow position={[0, 0.2, 0]}>
                             <boxGeometry args={[finalWidth, 0.4, finalDepth]} />
                             <meshStandardMaterial color={color} roughness={0.8} />
                         </mesh>
-                        {/* Overlapping backrest */}
                         <mesh castShadow receiveShadow position={[0, 0.5, -finalDepth / 2 + 0.1]}>
                             <boxGeometry args={[finalWidth * 0.98, 0.6, 0.2]} />
                             <meshStandardMaterial color={color} />
                         </mesh>
-                        {/* Arms */}
                         <mesh castShadow receiveShadow position={[-finalWidth / 2 + 0.1, 0.35, 0]}>
                             <boxGeometry args={[0.2, 0.5, finalDepth]} />
                             <meshStandardMaterial color={color} />
@@ -298,12 +232,10 @@ const Furniture3D = ({ item }) => {
             case 'Tables':
                 return (
                     <group>
-                        {/* Table Top */}
                         <mesh castShadow receiveShadow position={[0, 0.75, 0]}>
                             <boxGeometry args={[finalWidth, 0.05, finalDepth]} />
                             <meshStandardMaterial color={color} roughness={0.3} metalness={0.1} />
                         </mesh>
-                        {/* Legs */}
                         {[[-1, -1], [-1, 1], [1, -1], [1, 1]].map(([x, z], i) => (
                             <mesh key={i} castShadow position={[x * (finalWidth / 2 - 0.1), 0.375, z * (finalDepth / 2 - 0.1)]}>
                                 <boxGeometry args={[0.06, 0.75, 0.06]} />
@@ -315,17 +247,14 @@ const Furniture3D = ({ item }) => {
             case 'Beds':
                 return (
                     <group>
-                        {/* Base Frame */}
                         <mesh castShadow receiveShadow position={[0, 0.15, 0]}>
                             <boxGeometry args={[finalWidth, 0.3, finalDepth]} />
                             <meshStandardMaterial color={color} />
                         </mesh>
-                        {/* Mattress */}
                         <mesh castShadow receiveShadow position={[0, 0.4, 0]}>
                             <boxGeometry args={[finalWidth * 0.95, 0.25, finalDepth * 0.98]} />
                             <meshStandardMaterial color="#f0f0f0" roughness={0.9} />
                         </mesh>
-                        {/* Headboard */}
                         <mesh castShadow receiveShadow position={[0, 0.7, -finalDepth / 2 + 0.05]}>
                             <boxGeometry args={[finalWidth, 1.1, 0.1]} />
                             <meshStandardMaterial color={color} />
@@ -335,17 +264,14 @@ const Furniture3D = ({ item }) => {
             case 'Chairs':
                 return (
                     <group>
-                        {/* Seat */}
                         <mesh castShadow receiveShadow position={[0, 0.45, 0]}>
                             <boxGeometry args={[finalWidth, 0.1, finalDepth]} />
                             <meshStandardMaterial color={color} />
                         </mesh>
-                        {/* Back Bar */}
                         <mesh castShadow receiveShadow position={[0, 0.8, -finalDepth / 2 + 0.05]}>
                             <boxGeometry args={[finalWidth, 0.7, 0.05]} />
                             <meshStandardMaterial color={color} />
                         </mesh>
-                        {/* Legs */}
                         {[[-1, -1], [-1, 1], [1, -1], [1, 1]].map(([x, z], i) => (
                             <mesh key={i} castShadow position={[x * (finalWidth / 2 - 0.05), 0.225, z * (finalDepth / 2 - 0.05)]}>
                                 <boxGeometry args={[0.04, 0.45, 0.04]} />
@@ -371,30 +297,95 @@ const Furniture3D = ({ item }) => {
         }
     };
 
+    return modelUrl ? (
+        <ModelErrorBoundary fallback={renderManualModel()}>
+            <Suspense fallback={null}>
+                <GLBModel 
+                    url={modelUrl} 
+                    scaleX={scaleX} 
+                    scaleY={scaleY} 
+                    targetWidth={finalWidth}
+                    targetDepth={finalDepth}
+                    targetHeight={height}
+                    color={color}
+                />
+            </Suspense>
+        </ModelErrorBoundary>
+    ) : renderManualModel();
+});
+
+const Furniture3D = React.memo(({ 
+    item, 
+    setSelectedId, 
+    setIsDragging3D, 
+    setDragOffset, 
+    isDragging3D, 
+    selectedId, 
+    dragOffset, 
+    setPlacedItems, 
+    roomConfig, 
+    clampPosition, 
+    saveToHistory,
+    snapEnabled
+}) => {
+    const { 
+        rotation = 0,
+    } = item;
+    const rotRad = (rotation * Math.PI) / 180;
+
     return (
         <group
             position={[item.x, 0, item.y]}
             rotation={[0, rotRad, 0]}
+            onPointerDown={(e) => {
+                e.stopPropagation();
+                setSelectedId(item.instanceId);
+                
+                const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+                const hitPoint = new THREE.Vector3();
+                e.ray.intersectPlane(plane, hitPoint);
+                
+                setDragOffset({
+                    x: hitPoint.x - item.x,
+                    z: hitPoint.z - item.y
+                });
+                setIsDragging3D(true);
+                saveToHistory();
+                if (e.target.setPointerCapture) e.target.setPointerCapture(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+                if (!isDragging3D || selectedId !== item.instanceId) return;
+                
+                const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+                const target = new THREE.Vector3();
+                e.ray.intersectPlane(plane, target);
+                
+                let newX = target.x - dragOffset.x;
+                let newZ = target.z - dragOffset.z;
+
+                if (snapEnabled) {
+                    newX = Math.round(newX * 10) / 10;
+                    newZ = Math.round(newZ * 10) / 10;
+                }
+                
+                setPlacedItems(prev => prev.map(p => {
+                    if (p.instanceId !== item.instanceId) return p;
+                    const updated = { ...p, x: newX, y: newZ };
+                    const clamped = clampPosition(updated, roomConfig.width, roomConfig.depth, roomConfig.shape);
+                    return { ...p, ...clamped };
+                }));
+            }}
+            onPointerUp={(e) => {
+                if (!isDragging3D) return;
+                e.stopPropagation();
+                setIsDragging3D(false);
+                if (e.target.releasePointerCapture) e.target.releasePointerCapture(e.pointerId);
+            }}
         >
-            {modelUrl ? (
-                <ModelErrorBoundary fallback={renderModel()}>
-                    <Suspense fallback={null}>
-                        <GLBModel 
-                            url={modelUrl} 
-                            scaleX={scaleX} 
-                            scaleY={scaleY} 
-                            targetWidth={finalWidth}
-                            targetDepth={finalDepth}
-                            targetHeight={height}
-                        />
-                    </Suspense>
-                </ModelErrorBoundary>
-            ) : (
-                renderModel()
-            )}
+            <FurnitureModel item={item} />
         </group>
     );
-};
+});
 
 // ── Room Shape Definitions ──────────────────────────────────────────────────
 const ROOM_SHAPES = [
@@ -411,19 +402,186 @@ const ROOM_SHAPES = [
         clip: 'polygon(0% 0%, 55% 0%, 55% 45%, 100% 45%, 100% 100%, 0% 100%)',
         svg: 'M2,2 h20 v10 h16 v18 h-36 Z',
     },
-    {
-        id: 't-shape',
-        label: 'T-Shape',
-        clip: 'polygon(20% 0%, 80% 0%, 80% 38%, 100% 38%, 100% 62%, 80% 62%, 80% 100%, 20% 100%, 20% 62%, 0% 62%, 0% 38%, 20% 38%)',
-        svg: 'M2,2 h36 v10 h-13 v18 h-10 v-18 h-13 Z',
-    },
-    {
-        id: 'u-shape',
-        label: 'U-Shape',
-        clip: 'polygon(0% 0%, 32% 0%, 32% 55%, 68% 55%, 68% 0%, 100% 0%, 100% 100%, 0% 100%)',
-        svg: 'M2,2 h10 v16 h16 v-16 h10 v26 h-36 Z',
-    },
 ];
+
+// --- Sub-components for Optimization ---
+
+const LibraryItem = React.memo(({ item, onClick }) => {
+    const imageUrl = item.imageUrl?.startsWith('/') 
+        ? `${import.meta.env.VITE_API_URL}${item.imageUrl}` 
+        : item.imageUrl;
+
+    return (
+        <div
+            className="p-3 bg-white border border-gray-100 rounded-2xl hover:border-[#A85517] hover:shadow-md transition-all group cursor-pointer"
+            onClick={() => onClick(item)}
+        >
+            <div className="flex gap-4">
+                <div className="w-16 h-16 bg-gray-50 rounded-xl overflow-hidden shrink-0">
+                    <img src={imageUrl} alt={item.name} className="w-full h-full object-cover" />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <p className="text-xs font-black text-gray-900 truncate">{item.name}</p>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">{item.category}</p>
+                    <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black text-[#A85517]">${item.price}</span>
+                        <div className="bg-gray-100 p-1 rounded-lg group-hover:bg-[#A85517] transition-all">
+                            <Plus className="w-3 h-3 text-gray-400 group-hover:text-white" />
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+});
+
+const FurnitureLibrary = React.memo(({ items, onAddItem }) => (
+    <div className="space-y-3">
+        {items.map(item => (
+            <LibraryItem key={item._id} item={item} onClick={onAddItem} />
+        ))}
+        {items.length === 0 && (
+            <div className="text-center py-8">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">No items found</p>
+            </div>
+        )}
+    </div>
+));
+
+const ThrottledColorPicker = React.memo(({ value, onChange, onFocus }) => {
+    const [localValue, setLocalValue] = useState(value);
+    const timeoutRef = useRef(null);
+
+    useEffect(() => {
+        setLocalValue(value);
+    }, [value]);
+
+    const handleChange = (e) => {
+        const newVal = e.target.value;
+        setLocalValue(newVal);
+        
+        if (!timeoutRef.current) {
+            timeoutRef.current = setTimeout(() => {
+                onChange(newVal);
+                timeoutRef.current = null;
+            }, 32); // ~30fps for smooth interactive updates
+        }
+    };
+
+    return (
+        <input
+            type="color"
+            value={localValue}
+            onFocus={onFocus}
+            onChange={handleChange}
+            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+        />
+    );
+});
+
+const ThreeDTopDownItems = React.memo(({ roomConfig, placedItems }) => {
+    // Use deferredValue to prevent the expensive 3D render from blocking the main UI thread during dragging
+    const deferredItems = React.useDeferredValue(placedItems);
+    
+    return (
+        <div className="absolute inset-0 pointer-events-none">
+            <Canvas
+                orthographic
+                camera={{
+                    left: -roomConfig.width / 2,
+                    right: roomConfig.width / 2,
+                    top: roomConfig.depth / 2,
+                    bottom: -roomConfig.depth / 2,
+                    near: 0.1,
+                    far: 1000,
+                    position: [0, 50, 0],
+                    up: [0, 0, -1]
+                }}
+                gl={{ alpha: true, antialias: true, powerPreference: "high-performance", preserveDrawingBuffer: true }}
+                style={{ background: 'transparent' }}
+            >
+                <ambientLight intensity={1.8} />
+                <directionalLight position={[0, 50, 0]} intensity={1.5} />
+                <hemisphereLight skyColor="#ffffff" groundColor="#444444" intensity={0.5} />
+                <pointLight position={[roomConfig.width/2, 10, roomConfig.depth/2]} intensity={0.8} />
+                {deferredItems.map(item => (
+                    <group 
+                        key={item.instanceId} 
+                        position={[item.x, 0, item.y]} 
+                        rotation={[0, (item.rotation * Math.PI) / 180, 0]}
+                    >
+                        <FurnitureModel item={item} />
+                    </group>
+                ))}
+            </Canvas>
+        </div>
+    );
+});
+
+const Room2DViewport = React.memo(({ 
+    roomConfig, 
+    placedItems, 
+    selectedId, 
+    setSelectedId, 
+    handleMouseDown, 
+    isDragging, 
+    PIXELS_PER_METER,
+    ROOM_SHAPES,
+    roomRef
+}) => {
+    return (
+        <div className="w-full h-full p-20 flex items-center justify-center relative select-none overflow-auto animate-in fade-in duration-700">
+            <div
+                ref={roomRef}
+                className="relative shadow-2xl border-4 border-white transition-all duration-300 overflow-hidden"
+                style={{
+                    width: `${roomConfig.width * PIXELS_PER_METER}px`,
+                    height: `${roomConfig.depth * PIXELS_PER_METER}px`,
+                    backgroundColor: roomConfig.floorColor,
+                    backgroundImage: 'radial-gradient(rgba(0,0,0,0.1) 1px, transparent 1px)',
+                    backgroundSize: '30px 30px',
+                    clipPath: ROOM_SHAPES.find(s => s.id === roomConfig.shape)?.clip || 'none',
+                }}
+                onClick={() => setSelectedId(null)}
+            >
+                <div className="absolute inset-0 pointer-events-none" style={{ outline: '4px solid white', border: '3px solid rgba(255,255,255,0.6)' }} />
+                <div className="absolute -top-10 left-1/2 -translate-x-1/2 text-[11px] font-black text-gray-400 uppercase tracking-widest">{roomConfig.width}m</div>
+                <div className="absolute top-1/2 -left-12 -translate-y-1/2 -rotate-90 text-[11px] font-black text-gray-400 uppercase tracking-widest">{roomConfig.depth}m</div>
+
+                <ThreeDTopDownItems roomConfig={roomConfig} placedItems={placedItems} />
+
+                {placedItems.map(item => (
+                    <div
+                        key={item.instanceId}
+                        onMouseDown={(e) => handleMouseDown(e, item.instanceId)}
+                        onClick={(e) => { e.stopPropagation(); setSelectedId(item.instanceId); }}
+                        className={`absolute cursor-move flex flex-col items-center justify-center group overflow-hidden ${isDragging && selectedId === item.instanceId ? '' : 'transition-all'} ${selectedId === item.instanceId ? 'ring-2 ring-[#A85517] z-20 shadow-xl scale-[1.01]' : 'hover:ring-1 hover:ring-white/50 z-10'}`}
+                        style={{
+                            left: `${(item.x + roomConfig.width / 2 - item.width / 2) * PIXELS_PER_METER}px`,
+                            top: `${(item.y + roomConfig.depth / 2 - item.depth / 2) * PIXELS_PER_METER}px`,
+                            width: `${item.width * (item.scaleX / 100) * PIXELS_PER_METER}px`,
+                            height: `${item.depth * (item.scaleY / 100) * PIXELS_PER_METER}px`,
+                            backgroundColor: selectedId === item.instanceId ? 'rgba(168, 85, 23, 0.05)' : 'transparent',
+                            transform: `rotate(${item.rotation}deg)`,
+                            borderRadius: '2px'
+                        }}
+                    >
+                        <div className={`text-[8px] font-black uppercase text-center leading-tight truncate px-1 pointer-events-none transition-opacity ${selectedId === item.instanceId ? 'text-[#A85517] opacity-100' : 'text-gray-400 opacity-0 group-hover:opacity-100'}`}>
+                            {item.name.split(' ')[0]}
+                        </div>
+                    </div>
+                ))}
+
+                {placedItems.length === 0 && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 pointer-events-none opacity-20">
+                        <div className="p-4 border-2 border-dashed border-white rounded-3xl"><LayoutGrid className="w-12 h-12 text-white" /></div>
+                        <p className="text-xs font-black text-white uppercase tracking-widest px-12 text-center">Add furniture from the left panel<br />Click the + button on any item to place it</p>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+});
 
 const EditorPage = () => {
     const { user } = useContext(AuthContext);
@@ -434,6 +592,8 @@ const EditorPage = () => {
     const [snapEnabled, setSnapEnabled] = useState(true);
     const [shadowsEnabled, setShadowsEnabled] = useState(true);
     const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'success'
+    const [isDragging3D, setIsDragging3D] = useState(false);
+    const [dragOffset, setDragOffset] = useState({ x: 0, z: 0 });
 
     // 2. Room Configuration
     const [roomConfig, setRoomConfig] = useState({
@@ -459,14 +619,67 @@ const EditorPage = () => {
     const [history, setHistory] = useState([]);
     const [redoStack, setRedoStack] = useState([]);
     const viewportRef = useRef(null);
+    const roomRef = useRef(null);
 
-    const saveToHistory = () => {
+    // --- Memoized Computations ---
+    const filteredLibrary = useMemo(() => {
+        return libraryItems.filter(item =>
+            item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            item.category.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+    }, [libraryItems, searchQuery]);
+
+    const clampPosition = useCallback((item, w, d, shape = 'rectangle') => {
+        const isRotated = Math.abs(item.rotation % 180) === 90;
+        const itemW = item.width * (item.scaleX / 100);
+        const itemD = item.depth * (item.scaleY / 100);
+        const effW = isRotated ? itemD : itemW;
+        const effD = isRotated ? itemW : itemD;
+
+        const marginX = (w / 2) - (effW / 2);
+        const marginY = (d / 2) - (effD / 2);
+
+        let newX = Math.max(-marginX, Math.min(marginX, item.x));
+        let newY = Math.max(-marginY, Math.min(marginY, item.y));
+
+        if (shape === 'l-shape') {
+            const cutX = (0.05 * w); // X boundary of the cutout
+            const cutY = (-0.05 * d); // Y boundary of the cutout
+            
+            // Check if item infringes on the empty top-right cutout
+            // Region: X > cutX AND Y < cutY
+            if (newX + (effW / 2) > cutX && newY - (effD / 2) < cutY) {
+                // Determine the shortest path to push it back into the room
+                const overlapX = (newX + effW / 2) - cutX;
+                const overlapY = cutY - (newY - effD / 2);
+                
+                if (overlapX < overlapY) {
+                    newX = cutX - (effW / 2); // Push left
+                } else {
+                    newY = cutY + (effD / 2); // Push down
+                }
+            }
+        }
+
+        return { x: newX, y: newY };
+    }, []);
+
+    const updateItemProperty = useCallback((id, field, value) => {
+        setPlacedItems(prev => prev.map(item => {
+            if (item.instanceId !== id) return item;
+            const updated = { ...item, [field]: value };
+            const { x, y } = clampPosition(updated, roomConfig.width, roomConfig.depth, roomConfig.shape);
+            return { ...updated, x, y };
+        }));
+    }, [clampPosition, roomConfig.width, roomConfig.depth, roomConfig.shape]);
+
+    const saveToHistory = useCallback(() => {
         setHistory(prev => [...prev.slice(-19), {
             placedItems: JSON.parse(JSON.stringify(placedItems)),
             roomConfig: { ...roomConfig }
         }]);
-        setRedoStack([]); // Clear redo stack on new action
-    };
+        setRedoStack([]);
+    }, [placedItems, roomConfig]);
 
     const handleUndo = () => {
         if (history.length === 0) return;
@@ -525,9 +738,7 @@ const EditorPage = () => {
         }
     };
 
-    // 6. Drag & Drop State
     const [isDragging, setIsDragging] = useState(false);
-    const roomRef = useRef(null);
     const PIXELS_PER_METER = 60;
 
     const wallColors = ['#F2F2F2', '#E5E7EB', '#D1D5DB', '#FDE68A', '#FEE2E2', '#DBEAFE'];
@@ -611,14 +822,28 @@ const EditorPage = () => {
                     modelUrl: item.modelUrl || null,
                 }));
                 setPlacedItems(restoredItems);
-                setCurrentDesignId(designId);
                 setCurrentDesignName(design.name);
+
+                // Task: Save as Copy logic
+                // If the user didn't create this design AND is not an admin, we clear the ID
+                // so that when they click "Save", it creates a NEW design for them instead of updating
+                const creatorId = design.creator?._id || design.creator;
+                const isCreator = creatorId === user?.id;
+                const isAdmin = user?.role === 'admin';
+
+                if (isCreator || isAdmin) {
+                    setCurrentDesignId(designId);
+                    console.log('Loaded design for editing (Owner/Admin access)');
+                } else {
+                    setCurrentDesignId(null); // Clear ID to trigger creation on save
+                    console.log('Loaded design as template (will save as new copy)');
+                }
             } catch (err) {
                 console.error('Error loading design:', err);
             }
         };
         loadDesign();
-    }, [searchParams]);
+    }, [searchParams, user]);
 
     const handleRoomInput = (field, value) => {
         if (roomConfig[field] !== value) {
@@ -628,39 +853,40 @@ const EditorPage = () => {
     };
 
     const saveDesign = async () => {
+        console.log('Save Design clicked. User:', user);
         if (!user) {
+            console.log('No user found, redirecting to login...');
             navigate('/login');
             return;
         }
 
-        // If editing a saved design, update it directly (no name prompt needed)
+        const payload = {
+            name: currentDesignName || 'Untitled Design',
+            roomSettings: roomConfig,
+            placedItems,
+        };
+
+        // If editing a saved design, update it directly
         if (currentDesignId) {
             try {
                 setSaveStatus('saving');
-                await axios.put(`${import.meta.env.VITE_API_URL}/designs/${currentDesignId}`, {
-                    name: currentDesignName,
-                    roomSettings: roomConfig,
-                    placedItems,
-                });
+                console.log('Updating design:', currentDesignId, payload);
+                await axios.put(`${import.meta.env.VITE_API_URL}/designs/${currentDesignId}`, payload);
                 setSaveStatus('success');
                 setTimeout(() => setSaveStatus('idle'), 2500);
             } catch (err) {
                 console.error('Error updating design:', err);
                 setSaveStatus('idle');
+                alert('Failed to update design: ' + (err.response?.data?.msg || err.message));
             }
             return;
         }
 
-        // New design — prompt for a name
-        const name = window.prompt('Name your design:', 'Untitled Design');
-        if (name === null) return;
         try {
             setSaveStatus('saving');
-            const res = await axios.post(`${import.meta.env.VITE_API_URL}/designs`, {
-                name: name || 'Untitled Design',
-                roomSettings: roomConfig,
-                placedItems,
-            });
+            console.log('Creating new design:', payload);
+            const res = await axios.post(`${import.meta.env.VITE_API_URL}/designs`, payload);
+            
             // Lock editor to update this design from now on
             setCurrentDesignId(res.data._id);
             setCurrentDesignName(res.data.name);
@@ -669,10 +895,11 @@ const EditorPage = () => {
         } catch (err) {
             console.error('Error saving design:', err);
             setSaveStatus('idle');
+            alert('Failed to save design: ' + (err.response?.data?.msg || err.message));
         }
     };
 
-    const addFurnitureToRoom = (item) => {
+    const addFurnitureToRoom = useCallback((item) => {
         saveToHistory();
         const newItem = {
             instanceId: Math.random().toString(36).substr(2, 9),
@@ -693,33 +920,9 @@ const EditorPage = () => {
         };
         setPlacedItems(prev => [...prev, newItem]);
         setSelectedId(newItem.instanceId);
-    };
+    }, [saveToHistory]);
 
-    // Helper to keep items inside room boundaries
-    const clampPosition = (item, w, d) => {
-        const isRotated = Math.abs(item.rotation % 180) === 90;
-        const itemW = item.width * (item.scaleX / 100);
-        const itemD = item.depth * (item.scaleY / 100);
-        const effW = isRotated ? itemD : itemW;
-        const effD = isRotated ? itemW : itemD;
-
-        const marginX = (w / 2) - (effW / 2);
-        const marginY = (d / 2) - (effD / 2);
-
-        return {
-            x: Math.max(-marginX, Math.min(marginX, item.x)),
-            y: Math.max(-marginY, Math.min(marginY, item.y))
-        };
-    };
-
-    const updateItemProperty = (id, field, value) => {
-        setPlacedItems(prev => prev.map(item => {
-            if (item.instanceId !== id) return item;
-            const updated = { ...item, [field]: value };
-            const { x, y } = clampPosition(updated, roomConfig.width, roomConfig.depth);
-            return { ...updated, x, y };
-        }));
-    };
+    // Item management logic removed (now handled by memoized updateItemProperty)
 
     // Task: Re-clamp all items when room size changes
     useEffect(() => {
@@ -727,7 +930,7 @@ const EditorPage = () => {
             const { x, y } = clampPosition(item, roomConfig.width, roomConfig.depth);
             return { ...item, x, y };
         }));
-    }, [roomConfig.width, roomConfig.depth]);
+    }, [roomConfig.width, roomConfig.depth, clampPosition]);
 
     const removeItem = (id) => {
         saveToHistory();
@@ -745,7 +948,7 @@ const EditorPage = () => {
         setIsDragging(true);
     };
 
-    const handleMouseMove = (e) => {
+    const handleMouseMove = useCallback((e) => {
         if (!isDragging || !selectedId || !roomRef.current) return;
 
         const rect = roomRef.current.getBoundingClientRect();
@@ -764,20 +967,24 @@ const EditorPage = () => {
             meterY = Math.round(meterY * 10) / 10;
         }
 
-        // Boundary constraints
-        const limitX = (roomConfig.width / 2);
-        const limitY = (roomConfig.depth / 2);
+        // Apply bounds using clampPosition directly
+        const currentItem = placedItems.find(i => i.instanceId === selectedId);
+        if (!currentItem) return;
 
-        meterX = Math.max(-limitX, Math.min(limitX, meterX));
-        meterY = Math.max(-limitY, Math.min(limitY, meterY));
+        const tempItem = { ...currentItem, x: meterX, y: meterY };
+        const clamped = clampPosition(tempItem, roomConfig.width, roomConfig.depth, roomConfig.shape);
+        
+        // Prevent redundant state updates if position hasn't changed (especially after snapping/clamping)
+        if (currentItem.x === clamped.x && currentItem.y === clamped.y) return;
 
-        updateItemProperty(selectedId, 'x', meterX);
-        updateItemProperty(selectedId, 'y', meterY);
-    };
+        setPlacedItems(prev => prev.map(item => 
+            item.instanceId === selectedId ? { ...item, x: clamped.x, y: clamped.y } : item
+        ));
+    }, [isDragging, selectedId, placedItems, snapEnabled, roomConfig.width, roomConfig.depth, roomConfig.shape, clampPosition, PIXELS_PER_METER]);
 
-    const handleMouseUp = () => {
+    const handleMouseUp = useCallback(() => {
         setIsDragging(false);
-    };
+    }, []);
 
     useEffect(() => {
         if (isDragging) {
@@ -791,27 +998,51 @@ const EditorPage = () => {
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
         };
-    }, [isDragging, selectedId]);
+    }, [isDragging, handleMouseMove, handleMouseUp]);
 
-    const selectedItem = placedItems.find(i => i.instanceId === selectedId);
-    const filteredLibrary = libraryItems.filter(item =>
-        item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.category.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const selectedItem = useMemo(() => placedItems.find(i => i.instanceId === selectedId), [placedItems, selectedId]);
 
     return (
         <div className="flex flex-col h-screen bg-[#FDFCF9] overflow-hidden">
 
             {/* 1. Editor Top Bar */}
             <header className="h-16 border-b border-gray-100 bg-white flex items-center justify-between px-6 shrink-0 z-50">
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-6">
+                    <div className="flex items-center gap-3 border-r border-gray-100 pr-4">
+                        <Link to="/" className="flex items-center gap-2 group">
+                            <div className="bg-[#A85517] p-1.5 rounded-lg shadow-md group-hover:bg-[#8B4413] transition-colors">
+                                <Home className="text-white w-4 h-4" />
+                            </div>
+                            <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-gray-900 to-gray-600">
+                                Room<span className="text-[#A85517]">Vis</span>
+                            </span>
+                        </Link>
+                    </div>
+                    
                     <div className="flex items-center gap-3">
-                        <span className="text-xl font-serif font-black text-gray-900 tracking-tight">
-                            {currentDesignName}
-                        </span>
-                        {currentDesignId && (
+                        <Link 
+                            to="/designs" 
+                            className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-[#A85517] transition-all group"
+                        >
+                            <LayoutGrid className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
+                            My Designs
+                        </Link>
+                        <div className="h-4 w-px bg-gray-100 mx-1" />
+                        <input
+                            type="text"
+                            value={currentDesignName}
+                            onChange={(e) => setCurrentDesignName(e.target.value)}
+                            className="text-xl font-serif font-black text-gray-900 tracking-tight bg-transparent border-b-2 border-transparent hover:border-gray-100 focus:border-[#A85517] focus:outline-none transition-all px-1 w-64"
+                            placeholder="Design Name"
+                        />
+                        {currentDesignId ? (
                             <span className="text-[9px] font-black uppercase tracking-widest bg-orange-50 text-[#A85517] border border-orange-100 rounded-full px-2.5 py-0.5">
                                 Editing saved
+                            </span>
+                        ) : searchParams.get('design') && (
+                            <span className="text-[9px] font-black uppercase tracking-widest bg-blue-50 text-blue-600 border border-blue-100 rounded-full px-2.5 py-0.5 flex items-center gap-1.5">
+                                <div className="w-1 h-1 bg-blue-600 rounded-full animate-pulse" />
+                                Official Template
                             </span>
                         )}
                     </div>
@@ -1053,36 +1284,7 @@ const EditorPage = () => {
                             />
                         </div>
 
-                        <div className="space-y-3">
-                            {filteredLibrary.map(item => (
-                                <div
-                                    key={item._id}
-                                    className="p-3 bg-white border border-gray-100 rounded-2xl hover:border-[#A85517] hover:shadow-md transition-all group cursor-pointer"
-                                    onClick={() => addFurnitureToRoom(item)}
-                                >
-                                    <div className="flex gap-4">
-                                        <div className="w-16 h-16 bg-gray-50 rounded-xl overflow-hidden shrink-0">
-                                            <img src={item.imageUrl} alt="" className="w-full h-full object-cover" />
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-xs font-black text-gray-900 truncate">{item.name}</p>
-                                            <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">{item.category}</p>
-                                            <div className="flex items-center justify-between">
-                                                <span className="text-[10px] font-black text-[#A85517]">${item.price}</span>
-                                                <div className="bg-gray-100 p-1 rounded-lg group-hover:bg-[#A85517] transition-all">
-                                                    <Plus className="w-3 h-3 text-gray-400 group-hover:text-white" />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                            {filteredLibrary.length === 0 && (
-                                <div className="text-center py-8">
-                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">No items found</p>
-                                </div>
-                            )}
-                        </div>
+                        <FurnitureLibrary items={filteredLibrary} onAddItem={addFurnitureToRoom} />
                     </div>
                 </aside>
 
@@ -1108,14 +1310,15 @@ const EditorPage = () => {
                         /* 3D Scene View */
                         <div className="w-full h-full bg-[#D8DDE5] cursor-move animate-in fade-in duration-700">
                             <Canvas
-                                shadows
-                                gl={{ antialias: true, toneMapping: 4, toneMappingExposure: 0.85 }}
+                                shadows={{ type: THREE.PCFShadowMap }}
+                                gl={{ antialias: true, toneMapping: 4, toneMappingExposure: 0.85, preserveDrawingBuffer: true }}
                                 dpr={[1, 1.5]}
                             >
                                 <Suspense fallback={null}>
                                     <PerspectiveCamera makeDefault position={[12, 12, 12]} fov={40} />
                                     <OrbitControls
                                         makeDefault
+                                        enabled={!isDragging3D}
                                         minPolarAngle={0}
                                         maxPolarAngle={Math.PI / 2.1}
                                         enableDamping={true}
@@ -1123,63 +1326,35 @@ const EditorPage = () => {
                                     />
 
                                     {/* Task 12: Full Professional Lighting Rig */}
-                                    {/* Key Light — primary directional light from upper-left */}
-                                    <directionalLight
-                                        position={[8, 12, 6]}
-                                        intensity={shadowsEnabled ? 1.8 : 0.8}
-                                        castShadow={shadowsEnabled}
-                                        shadow-mapSize={[4096, 4096]}
-                                        shadow-camera-near={0.1}
-                                        shadow-camera-far={50}
-                                        shadow-camera-left={-15}
-                                        shadow-camera-right={15}
-                                        shadow-camera-top={15}
-                                        shadow-camera-bottom={-15}
-                                        shadow-bias={-0.0005}
-                                        color="#fff5e4"
-                                    />
-                                    {/* Fill Light — softens shadows from opposite side */}
-                                    <directionalLight
-                                        position={[-6, 8, -4]}
-                                        intensity={shadowsEnabled ? 0.6 : 0.3}
-                                        color="#cce0ff"
-                                    />
-                                    {/* Rim Light — adds edge definition to furniture */}
-                                    <directionalLight
-                                        position={[0, 6, -10]}
-                                        intensity={0.3}
-                                        color="#ffecd2"
-                                    />
-                                    {/* Hemisphere Light — realistic sky/ground ambient */}
-                                    <hemisphereLight
-                                        skyColor="#dce8f8"
-                                        groundColor="#a0785a"
-                                        intensity={shadowsEnabled ? 0.5 : 0.8}
-                                    />
-                                    {/* Ambient base fill */}
+                                    <directionalLight position={[8, 12, 6]} intensity={shadowsEnabled ? 1.8 : 0.8} castShadow={shadowsEnabled} shadow-mapSize={[4096, 4096]} shadow-camera-near={0.1} shadow-camera-far={50} shadow-camera-left={-15} shadow-camera-right={15} shadow-camera-top={15} shadow-camera-bottom={-15} shadow-bias={-0.0005} color="#fff5e4" />
+                                    <directionalLight position={[-6, 8, -4]} intensity={shadowsEnabled ? 0.6 : 0.3} color="#cce0ff" />
+                                    <directionalLight position={[0, 6, -10]} intensity={0.3} color="#ffecd2" />
+                                    <hemisphereLight skyColor="#dce8f8" groundColor="#a0785a" intensity={shadowsEnabled ? 0.5 : 0.8} />
                                     <ambientLight intensity={shadowsEnabled ? 0.2 : 0.6} />
-
-                                    {/* Environment map for material reflections */}
                                     <Environment preset="apartment" />
 
-                                    {/* Room Content */}
                                     <Room {...roomConfig} shape={roomConfig.shape} />
 
-                                    {/* Task 10: Automatic Translation to 3D Models */}
                                     {placedItems.map(item => (
-                                        <Furniture3D key={item.instanceId} item={item} />
+                                        <Furniture3D 
+                                            key={item.instanceId} 
+                                            item={item} 
+                                            setSelectedId={setSelectedId}
+                                            setIsDragging3D={setIsDragging3D}
+                                            setDragOffset={setDragOffset}
+                                            isDragging3D={isDragging3D}
+                                            selectedId={selectedId}
+                                            dragOffset={dragOffset}
+                                            setPlacedItems={setPlacedItems}
+                                            roomConfig={roomConfig}
+                                            clampPosition={clampPosition}
+                                            saveToHistory={saveToHistory}
+                                            snapEnabled={snapEnabled}
+                                        />
                                     ))}
 
-                                    {/* Task 12: Contact Shadows — high-quality ground soft shadows */}
                                     {shadowsEnabled && (
-                                        <ContactShadows
-                                            opacity={0.5}
-                                            scale={Math.max(roomConfig.width, roomConfig.depth) * 2}
-                                            blur={1.5}
-                                            far={5}
-                                            resolution={512}
-                                            color="#1a0f00"
-                                        />
+                                        <ContactShadows opacity={0.5} scale={Math.max(roomConfig.width, roomConfig.depth) * 2} blur={1.5} far={5} resolution={512} color="#1a0f00" />
                                     )}
                                 </Suspense>
                             </Canvas>
@@ -1193,72 +1368,17 @@ const EditorPage = () => {
                             </div>
                         </div>
                     ) : (
-                        /* Task 9: 2D Interactive Blueprint View */
-                        <div className="w-full h-full p-20 flex items-center justify-center relative select-none overflow-auto animate-in fade-in duration-700">
-                            <div
-                                ref={roomRef}
-                                className="relative shadow-2xl border-4 border-white transition-all duration-300 overflow-hidden"
-                                style={{
-                                    width: `${roomConfig.width * 60}px`,
-                                    height: `${roomConfig.depth * 60}px`,
-                                    backgroundColor: roomConfig.floorColor,
-                                    backgroundImage: 'radial-gradient(rgba(0,0,0,0.1) 1px, transparent 1px)',
-                                    backgroundSize: '30px 30px',
-                                    clipPath: ROOM_SHAPES.find(s => s.id === roomConfig.shape)?.clip || 'none',
-                                }}
-                                onClick={() => setSelectedId(null)}
-                            >
-                                {/* Wall outline overlay that matches the clip shape */}
-                                <div
-                                    className="absolute inset-0 pointer-events-none"
-                                    style={{
-                                        outline: '4px solid white',
-                                        border: '3px solid rgba(255,255,255,0.6)',
-                                    }}
-                                />
-                                {/* Dimension Labels */}
-                                <div className="absolute -top-10 left-1/2 -translate-x-1/2 text-[11px] font-black text-gray-400 uppercase tracking-widest">{roomConfig.width}m</div>
-                                <div className="absolute top-1/2 -left-12 -translate-y-1/2 -rotate-90 text-[11px] font-black text-gray-400 uppercase tracking-widest">{roomConfig.depth}m</div>
-
-                                {/* Placed Items Rendering */}
-                                {placedItems.map(item => (
-                                    <div
-                                        key={item.instanceId}
-                                        onMouseDown={(e) => handleMouseDown(e, item.instanceId)}
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setSelectedId(item.instanceId);
-                                        }}
-                                        className={`absolute cursor-move flex items-center justify-center group overflow-hidden ${isDragging && selectedId === item.instanceId ? '' : 'transition-all'} ${selectedId === item.instanceId ? 'ring-2 ring-[#A85517] z-20 shadow-xl scale-[1.02]' : 'hover:ring-1 hover:ring-white/50 z-10'}`}
-                                        style={{
-                                            left: `${(item.x + roomConfig.width / 2 - item.width / 2) * 60}px`,
-                                            top: `${(item.y + roomConfig.depth / 2 - item.depth / 2) * 60}px`,
-                                            width: `${item.width * (item.scaleX / 100) * 60}px`,
-                                            height: `${item.depth * (item.scaleY / 100) * 60}px`,
-                                            backgroundColor: item.color,
-                                            transform: `rotate(${item.rotation}deg)`,
-                                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                                            border: '1px solid rgba(255,255,255,0.2)',
-                                            borderRadius: '2px'
-                                        }}
-                                    >
-                                        <div className="text-[8px] font-black text-white/40 uppercase text-center leading-tight truncate px-1 pointer-events-none">
-                                            {item.name.split(' ')[0]}
-                                        </div>
-                                    </div>
-                                ))}
-
-                                {/* Overlay Empty State */}
-                                {placedItems.length === 0 && (
-                                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 pointer-events-none opacity-20">
-                                        <div className="p-4 border-2 border-dashed border-white rounded-3xl">
-                                            <LayoutGrid className="w-12 h-12 text-white" />
-                                        </div>
-                                        <p className="text-xs font-black text-white uppercase tracking-widest px-12 text-center">Add furniture from the left panel<br />Click the + button on any item to place it</p>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
+                        <Room2DViewport 
+                            roomConfig={roomConfig}
+                            placedItems={placedItems}
+                            selectedId={selectedId}
+                            setSelectedId={setSelectedId}
+                            handleMouseDown={handleMouseDown}
+                            isDragging={isDragging}
+                            PIXELS_PER_METER={PIXELS_PER_METER}
+                            ROOM_SHAPES={ROOM_SHAPES}
+                            roomRef={roomRef}
+                        />
                     )}
                 </main>
 
@@ -1297,14 +1417,10 @@ const EditorPage = () => {
                                             className={`w-7 h-7 rounded-full border-2 transition-all flex items-center justify-center overflow-hidden ${!materialColors.includes(selectedItem.color) ? 'border-[#A85517] scale-110 shadow-md' : 'border-gray-100 hover:border-gray-300'}`}
                                             style={{ background: !materialColors.includes(selectedItem.color) ? selectedItem.color : 'conic-gradient(red, yellow, lime, aqua, blue, magenta, red)' }}
                                         >
-                                            <input
-                                                type="color"
+                                            <ThrottledColorPicker 
                                                 value={selectedItem.color}
-                                                onChange={(e) => {
-                                                    saveToHistory();
-                                                    updateItemProperty(selectedId, 'color', e.target.value);
-                                                }}
-                                                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                                onFocus={saveToHistory}
+                                                onChange={(val) => updateItemProperty(selectedId, 'color', val)}
                                             />
                                             {materialColors.includes(selectedItem.color) && <Plus className="w-3 h-3 text-white/80" />}
                                         </div>
