@@ -7,8 +7,8 @@ RoomVis allows designers and customers to visualise how furniture items would lo
 
 ## 🔗 Project Links
 - 🎨 Figma UI Design: https://www.figma.com/design/ebJiwM8lyOoqWNlUFTkVjc/RoomVis?node-id=0-1&p=f&t=dxCHzi8inwd80vOw-0
-- 📄 Report: *To be added*
-- 🎥 Video Presentation: *To be added*
+
+- 🎥 Video Presentation: https://liveplymouthac-my.sharepoint.com/:v:/g/personal/10952829_students_plymouth_ac_uk/IQBgDExF6iNKTpKyPN6hUApZAQWjpZREu-58QH3E4Mjxe9Y?nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0&e=qe2JVj
 
 ## 👥 Group Members & Roles
 
