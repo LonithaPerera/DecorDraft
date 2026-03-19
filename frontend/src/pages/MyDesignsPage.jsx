@@ -124,7 +124,7 @@ const DesignCard = ({
 };
 
 const MyDesignsPage = () => {
-    const { user } = useContext(AuthContext);
+    const { user, loading: authLoading } = useContext(AuthContext);
     const navigate = useNavigate();
     const [designs, setDesigns] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -133,12 +133,14 @@ const MyDesignsPage = () => {
     const [renameValue, setRenameValue] = useState('');
 
     useEffect(() => {
-        if (!user) {
-            navigate('/login');
-            return;
+        if (!authLoading) {
+            if (!user) {
+                navigate('/login');
+                return;
+            }
+            fetchDesigns();
         }
-        fetchDesigns();
-    }, [user]);
+    }, [user, authLoading]);
 
     const fetchDesigns = async () => {
         try {

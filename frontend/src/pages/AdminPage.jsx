@@ -217,7 +217,7 @@ const FurnitureModal = ({ initial, onClose, onSave }) => {
 // ─── Main Admin Page ────────────────────────────────────────────────────────
 
 const AdminPage = () => {
-    const { user } = useContext(AuthContext);
+    const { user, loading: authLoading } = useContext(AuthContext);
     const navigate = useNavigate();
 
     const [activeTab, setActiveTab] = useState('analytics');
@@ -232,12 +232,14 @@ const AdminPage = () => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (!user || user.role !== 'admin') {
-            navigate('/');
-            return;
+        if (!authLoading) {
+            if (!user || user.role !== 'admin') {
+                navigate('/');
+                return;
+            }
+            fetchAll();
         }
-        fetchAll();
-    }, [user]);
+    }, [user, authLoading]);
 
     const fetchAll = async () => {
         setLoading(true);
